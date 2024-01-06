@@ -3,21 +3,15 @@ import math
 
 import tensorflow as tf
 from packaging import version
+
 from tensorflow.keras import layers
+from tensorflow.keras.applications import imagenet_utils
+from tensorflow.keras import backend
+from tensorflow.keras.utils import get_source_inputs
 
-# Keras has been moved to separate repository in 2.9
-if version.parse(tf.__version__) < version.parse("2.8"):
-    from tensorflow.python.keras.applications import imagenet_utils
-else:
-    from keras.applications import imagenet_utils
-
-# tensorflow.python.keras is removed in 2.12
-if version.parse(tf.__version__) < version.parse("2.12"):
-    from tensorflow.python.keras import backend
-    from tensorflow.python.keras.utils import layer_utils
-else:
-    from tensorflow.keras import backend
-    from keras.utils import layer_utils
+from keras_applications.imagenet_utils import _obtain_input_shape
+from keras_applications.imagenet_utils import _correct_pad
+from keras_applications.imagenet_utils import _validate_activation
 
 from tensorflow.python.lib.io import file_io
 
@@ -197,7 +191,7 @@ def EfficientNetLite(
         )
 
     # Determine proper input shape
-    input_shape = imagenet_utils.obtain_input_shape(
+    input_shape = _obtain_input_shape(
         input_shape,
         default_size=default_size,
         min_size=32,
@@ -232,7 +226,7 @@ def EfficientNetLite(
     x = img_input
 
     x = layers.ZeroPadding2D(
-        padding=imagenet_utils.correct_pad(x, 3), name="stem_conv_pad"
+        padding=_correct_pad(x, 3), name="stem_conv_pad"
     )(x)
     x = layers.Conv2D(
         32,
@@ -291,7 +285,7 @@ def EfficientNetLite(
         x = layers.GlobalAveragePooling2D(name="avg_pool")(x)
         if dropout_rate > 0:
             x = layers.Dropout(dropout_rate, name="top_dropout")(x)
-        imagenet_utils.validate_activation(classifier_activation, weights)
+        _validate_activation(classifier_activation, weights)
         x = layers.Dense(
             classes,
             activation=classifier_activation,
@@ -307,7 +301,7 @@ def EfficientNetLite(
     # Ensure that the model takes into account
     # any potential predecessors of `input_tensor`.
     if input_tensor is not None:
-        inputs = layer_utils.get_source_inputs(input_tensor)
+        inputs = get_source_inputs(input_tensor)
     else:
         inputs = img_input
 
@@ -385,7 +379,7 @@ def block(
     # Depthwise Convolution
     if strides == 2:
         x = layers.ZeroPadding2D(
-            padding=imagenet_utils.correct_pad(x, kernel_size), name=name + "dwconv_pad"
+            padding=_correct_pad(x, kernel_size), name=name + "dwconv_pad"
         )(x)
         conv_pad = "valid"
     else:
