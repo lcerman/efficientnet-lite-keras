@@ -1,6 +1,8 @@
 """Package for importing EfficientNet Lite Keras models."""
 
 from efficientnet_lite.efficientnet_lite import (
+    EfficientNetLiteBn2,
+    EfficientNetLiteBn1,
     EfficientNetLiteB0,
     EfficientNetLiteB1,
     EfficientNetLiteB2,
@@ -10,6 +12,8 @@ from efficientnet_lite.efficientnet_lite import (
 from efficientnet_lite.preprocessing_layer import get_preprocessing_layer
 
 __all__ = [
+    "EfficientNetLiteBn2",
+    "EfficientNetLiteBn1",
     "EfficientNetLiteB0",
     "EfficientNetLiteB1",
     "EfficientNetLiteB2",

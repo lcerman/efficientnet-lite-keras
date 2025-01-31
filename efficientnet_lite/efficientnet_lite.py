@@ -118,6 +118,8 @@ def EfficientNetLite(
     pooling=None,
     classes=1000,
     classifier_activation="softmax",
+    scale_drop_connect_rate_with_final_depth=True,
+    verbose=False,
 ):
     """
     Instantiate the EfficientNet architecture using given scaling coefficients.
@@ -203,18 +205,6 @@ def EfficientNetLite(
 
     bn_axis = 3 if backend.image_data_format() == "channels_last" else 1
 
-    def round_filters(filters, divisor=depth_divisor):
-        """Round number of filters based on depth multiplier."""
-        filters *= width_coefficient
-        new_filters = max(divisor, int(filters + divisor / 2) // divisor * divisor)
-        # Make sure that round down does not go down by more than 10%.
-        if new_filters < 0.9 * filters:
-            new_filters += divisor
-        return int(new_filters)
-
-    def round_repeats(repeats):
-        """Round number of repeats based on depth multiplier."""
-        return int(math.ceil(depth_coefficient * repeats))
 
     # Build stem
     x = img_input
@@ -235,21 +225,19 @@ def EfficientNetLite(
     x = layers.ReLU(max_value=6, name="stem_activation")(x)
 
     # Build blocks
-    blocks_args = copy.deepcopy(blocks_args)
-    b = 0
-    blocks = float(sum(args["repeats"] for args in blocks_args))
+    scaled_blocks_args = list(scale_blocks(blocks_args, width_coefficient, depth_coefficient, depth_divisor,
+                                           verbose))
+    block_index = 0
+    blocks_count_B0 = sum(args["repeats"] for args in blocks_args)
+    blocks_count_scaled = sum(repeats for _, repeats in scaled_blocks_args)
+    blocks_count = (blocks_count_B0
+                    if scale_drop_connect_rate_with_final_depth else
+                    blocks_count_scaled)
+    if verbose:
+        print(f'\nNumber of blocks {blocks_count_B0} -> {blocks_count_scaled} '
+              f'~ depth coef = {blocks_count_scaled / blocks_count_B0:.3g}')
 
-    for (i, args) in enumerate(blocks_args):
-        assert args["repeats"] > 0
-        # Update block input and output filters based on depth multiplier.
-        args["filters_in"] = round_filters(args["filters_in"])
-        args["filters_out"] = round_filters(args["filters_out"])
-
-        if i == 0 or i == (len(blocks_args) - 1):
-            repeats = args.pop("repeats")
-        else:
-            repeats = round_repeats(args.pop("repeats"))
-
+    for (i, (args, repeats)) in enumerate(scaled_blocks_args):
         for j in range(repeats):
             # The first block needs to take care of stride and filter size increase.
             if j > 0:
@@ -257,12 +245,15 @@ def EfficientNetLite(
                 args["filters_in"] = args["filters_out"]
             x = block(
                 x,
-                drop_connect_rate * b / blocks,
+                drop_connect_rate * block_index / blocks_count,
                 name="block{}{}_".format(i + 1, chr(j + 97)),
                 **args,
             )
 
-            b += 1
+            block_index += 1
+
+    assert block_index == blocks_count_scaled
+
     # Build top
     x = layers.Conv2D(
         1280,
@@ -323,6 +314,44 @@ def EfficientNetLite(
         model.load_weights(weights)
 
     return model
+
+
+def scale_blocks(blocks_args, width_coefficient, depth_coefficient, depth_divisor, verbose=False):
+    def round_filters(filters, divisor=depth_divisor):
+        """Round number of filters based on width coefficient."""
+        filters_scaled = filters * width_coefficient
+        new_filters = max(divisor, int(filters_scaled + divisor / 2) // divisor * divisor)
+        # Make sure that round down does not go down by more than 10%.
+        if new_filters < 0.9 * filters_scaled:
+            new_filters += divisor
+        if verbose:
+            print(f'filters scaled: {filters} -> {filters_scaled:.1f}, {new_filters} '
+                  f'~ width coeff = {new_filters / filters:.3g}')
+        return int(new_filters)
+
+    def round_repeats(repeats):
+        """Round number of repeats based on depth coefficient."""
+        new_repeats = int(math.ceil(depth_coefficient * repeats))
+        if verbose:
+            print(f'repeats {repeats} -> {depth_coefficient * repeats:.3g}, {new_repeats}')
+        return new_repeats
+
+    for (i, args) in enumerate(blocks_args):
+        args = dict(args)
+
+        if verbose:
+            print(f'\nblock: {i}')
+
+        assert args["repeats"] > 0
+        # Update block input and output filters based on depth multiplier.
+        args["filters_in"] = round_filters(args["filters_in"])
+        args["filters_out"] = round_filters(args["filters_out"])
+
+        repeats = args.pop("repeats")
+        if i > 0 and i < (len(blocks_args) - 1):
+            repeats = round_repeats(repeats)
+
+        yield args, repeats
 
 
 def block(
@@ -539,6 +568,161 @@ def EfficientNetLiteB4(
         300,
         0.3,
         model_name="efficientnetlite4",
+        include_top=include_top,
+        weights=weights,
+        input_tensor=input_tensor,
+        input_shape=input_shape,
+        pooling=pooling,
+        classes=classes,
+        classifier_activation=classifier_activation,
+        **kwargs,
+    )
+
+def EfficientNetLiteBn1(
+    include_top=True,
+    weights="imagenet",
+    input_tensor=None,
+    input_shape=None,
+    pooling=None,
+    classes=1000,
+    classifier_activation="softmax",
+    **kwargs,
+):
+    """
+    Create Efficient Net Lite B-1 variant.
+
+    Ideal scaling coefficients for phi = -1 (see the original paper: EfficientNet: Rethinking Model Scaling
+    for Convolutional Neural Networks, https://arxiv.org/abs/1905.11946 ) would be:
+        width coefficient: 0.909
+        depth coefficient: 0.833
+        image size: 194.8
+
+    Due to the rounding, e.g., number of filters in each layer must be multiple of 8, repeats must be
+    integers, image dimensions should be divisible by powers of 2, etc..., the actual scaling deviates from the
+    ideal. The measured latency of int8 quantized B-2 model on ARMv7 is 90ms per image vs 170ms of the B0
+    model and 360ms of the B2 model.
+
+    The scaled network structure (notation: ORIGINAL -> SCALED, ROUNDED) follows.
+
+    block: 0
+    filters scaled: 32 -> 28.2, 32 ~ width coeff = 1
+    filters scaled: 16 -> 14.1, 16 ~ width coeff = 1
+
+    block: 1
+    filters scaled: 16 -> 14.1, 16 ~ width coeff = 1
+    filters scaled: 24 -> 21.1, 24 ~ width coeff = 1
+    repeats 2 -> 1.3, 2
+
+    block: 2
+    filters scaled: 24 -> 21.1, 24 ~ width coeff = 1
+    filters scaled: 40 -> 35.2, 32 ~ width coeff = 0.8
+    repeats 2 -> 1.3, 2
+
+    block: 3
+    filters scaled: 40 -> 35.2, 32 ~ width coeff = 0.8
+    filters scaled: 80 -> 70.4, 72 ~ width coeff = 0.9
+    repeats 3 -> 1.95, 2
+
+    block: 4
+    filters scaled: 80 -> 70.4, 72 ~ width coeff = 0.9
+    filters scaled: 112 -> 98.6, 96 ~ width coeff = 0.857
+    repeats 3 -> 1.95, 2
+
+    block: 5
+    filters scaled: 112 -> 98.6, 96 ~ width coeff = 0.857
+    filters scaled: 192 -> 169.0, 168 ~ width coeff = 0.875
+    repeats 4 -> 2.6, 3
+
+    block: 6
+    filters scaled: 192 -> 169.0, 168 ~ width coeff = 0.875
+    filters scaled: 320 -> 281.6, 280 ~ width coeff = 0.875
+
+    Number of blocks 16 -> 13 ~ depth coef = 0.812
+    """
+    return EfficientNetLite(
+        0.88,
+        0.65,
+        192,
+        0.15,
+        model_name="efficientnetlite_n1",
+        include_top=include_top,
+        weights=weights,
+        input_tensor=input_tensor,
+        input_shape=input_shape,
+        pooling=pooling,
+        classes=classes,
+        classifier_activation=classifier_activation,
+        **kwargs,
+    )
+
+
+def EfficientNetLiteBn2(
+    include_top=True,
+    weights="imagenet",
+    input_tensor=None,
+    input_shape=None,
+    pooling=None,
+    classes=1000,
+    classifier_activation="softmax",
+    **kwargs,
+):
+    """
+    Create Efficient Net Lite B-2 variant.
+
+    Ideal scaling coefficients for phi = -2 (see the original paper: EfficientNet: Rethinking Model Scaling
+    for Convolutional Neural Networks, https://arxiv.org/abs/1905.11946 ) would be:
+        width coefficient: 0.826
+        depth coefficient: 0.694
+        image size: 169.4
+
+    Due to the rounding, e.g., number of filters in each layer must be multiple of 8, repeats must be
+    integers, image dimensions should be divisible by powers of 2, etc..., the actual scaling deviates from the
+    ideal. The measured latency of int8 quantized B-2 model on ARMv7 is 60ms per image vs 170ms of the B0
+    model and 360ms of the B2 model.
+
+    The scaled network structure (notation: ORIGINAL -> SCALED, ROUNDED) follows.
+
+    block: 0
+    filters scaled: 32 -> 28.2, 32 ~ width coeff = 1
+    filters scaled: 16 -> 14.1, 16 ~ width coeff = 1
+
+    block: 1
+    filters scaled: 16 -> 14.1, 16 ~ width coeff = 1
+    filters scaled: 24 -> 21.1, 24 ~ width coeff = 1
+    repeats 2 -> 1.3, 2
+
+    block: 2
+    filters scaled: 24 -> 21.1, 24 ~ width coeff = 1
+    filters scaled: 40 -> 35.2, 32 ~ width coeff = 0.8
+    repeats 2 -> 1.3, 2
+
+    block: 3
+    filters scaled: 40 -> 35.2, 32 ~ width coeff = 0.8
+    filters scaled: 80 -> 70.4, 72 ~ width coeff = 0.9
+    repeats 3 -> 1.95, 2
+
+    block: 4
+    filters scaled: 80 -> 70.4, 72 ~ width coeff = 0.9
+    filters scaled: 112 -> 98.6, 96 ~ width coeff = 0.857
+    repeats 3 -> 1.95, 2
+
+    block: 5
+    filters scaled: 112 -> 98.6, 96 ~ width coeff = 0.857
+    filters scaled: 192 -> 169.0, 168 ~ width coeff = 0.875
+    repeats 4 -> 2.6, 3
+
+    block: 6
+    filters scaled: 192 -> 169.0, 168 ~ width coeff = 0.875
+    filters scaled: 320 -> 281.6, 280 ~ width coeff = 0.875
+
+    Number of blocks 16 -> 13 ~ depth coef = 0.812
+    """
+    return EfficientNetLite(
+        0.8,
+        0.5,
+        176,
+        0.1,
+        model_name="efficientnetlite_n2",
         include_top=include_top,
         weights=weights,
         input_tensor=input_tensor,
