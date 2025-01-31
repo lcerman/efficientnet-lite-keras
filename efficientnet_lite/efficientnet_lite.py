@@ -683,39 +683,39 @@ def EfficientNetLiteBn2(
     The scaled network structure (notation: ORIGINAL -> SCALED, ROUNDED) follows.
 
     block: 0
-    filters scaled: 32 -> 28.2, 32 ~ width coeff = 1
-    filters scaled: 16 -> 14.1, 16 ~ width coeff = 1
+    filters scaled: 32 -> 25.6, 24 ~ width coeff = 0.75
+    filters scaled: 16 -> 12.8, 16 ~ width coeff = 1
 
     block: 1
-    filters scaled: 16 -> 14.1, 16 ~ width coeff = 1
-    filters scaled: 24 -> 21.1, 24 ~ width coeff = 1
-    repeats 2 -> 1.3, 2
+    filters scaled: 16 -> 12.8, 16 ~ width coeff = 1
+    filters scaled: 24 -> 19.2, 24 ~ width coeff = 1
+    repeats 2 -> 1, 1
 
     block: 2
-    filters scaled: 24 -> 21.1, 24 ~ width coeff = 1
-    filters scaled: 40 -> 35.2, 32 ~ width coeff = 0.8
-    repeats 2 -> 1.3, 2
+    filters scaled: 24 -> 19.2, 24 ~ width coeff = 1
+    filters scaled: 40 -> 32.0, 32 ~ width coeff = 0.8
+    repeats 2 -> 1, 1
 
     block: 3
-    filters scaled: 40 -> 35.2, 32 ~ width coeff = 0.8
-    filters scaled: 80 -> 70.4, 72 ~ width coeff = 0.9
-    repeats 3 -> 1.95, 2
+    filters scaled: 40 -> 32.0, 32 ~ width coeff = 0.8
+    filters scaled: 80 -> 64.0, 64 ~ width coeff = 0.8
+    repeats 3 -> 1.5, 2
 
     block: 4
-    filters scaled: 80 -> 70.4, 72 ~ width coeff = 0.9
-    filters scaled: 112 -> 98.6, 96 ~ width coeff = 0.857
-    repeats 3 -> 1.95, 2
+    filters scaled: 80 -> 64.0, 64 ~ width coeff = 0.8
+    filters scaled: 112 -> 89.6, 88 ~ width coeff = 0.786
+    repeats 3 -> 1.5, 2
 
     block: 5
-    filters scaled: 112 -> 98.6, 96 ~ width coeff = 0.857
-    filters scaled: 192 -> 169.0, 168 ~ width coeff = 0.875
-    repeats 4 -> 2.6, 3
+    filters scaled: 112 -> 89.6, 88 ~ width coeff = 0.786
+    filters scaled: 192 -> 153.6, 152 ~ width coeff = 0.792
+    repeats 4 -> 2, 2
 
     block: 6
-    filters scaled: 192 -> 169.0, 168 ~ width coeff = 0.875
-    filters scaled: 320 -> 281.6, 280 ~ width coeff = 0.875
+    filters scaled: 192 -> 153.6, 152 ~ width coeff = 0.792
+    filters scaled: 320 -> 256.0, 256 ~ width coeff = 0.8
 
-    Number of blocks 16 -> 13 ~ depth coef = 0.812
+    Number of blocks 16 -> 10 ~ depth coef = 0.625
     """
     return EfficientNetLite(
         0.8,
